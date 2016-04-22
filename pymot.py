@@ -23,8 +23,9 @@ class MOTEvaluation:
     
         self.munkres_inf_ = sys.maxsize
         """Not quite infinite number for Munkres algorithm"""
-    
-        self.sync_delta_ = 0.001
+
+        # time measure in days, not milliseconds
+        self.sync_delta_ = 1.0/24/60.0/60.0/100.0  # 2/100th of a second time difference from groundtruth   #0.001 #measured in days,
         """Maximum offset considered for a match of hypothesis and ground truth"""
 
         self.groundtruth_ = groundtruth
@@ -85,6 +86,7 @@ class MOTEvaluation:
         
         frames = self.groundtruth_["frames"]
         for frame in frames:
+            print "frame: ", frame["num"]
             self.evaluateFrame(frame)
 
 
@@ -92,6 +94,7 @@ class MOTEvaluation:
         """Update statistics by evaluating a new frame."""
 
         timestamp = frame["timestamp"]
+        LOG.info('timestamp %f', timestamp)
         groundtruths = frame["annotations"]
         hypotheses = self.get_hypotheses_frame(timestamp)["hypotheses"]
 
@@ -561,6 +564,7 @@ if __name__ == "__main__":
     parser.add_argument('-v', '--visual_debug_file')
     args = parser.parse_args()
 
+
     # Load ground truth according to format
     # Assume MOT format, if non-json
     gt = open(args.groundtruth) # gt file
@@ -578,18 +582,18 @@ if __name__ == "__main__":
         hypotheses = MOT_hypo_import(hypo.readlines())
     hypo.close()
 
-
-    evaluator = MOTEvaluation(groundtruth, hypotheses)
-
     if(args.check_format):
         formatChecker = FormatChecker(groundtruth, hypotheses)
         success = formatChecker.checkForExistingIDs()
-        success |= formatChecker.checkForAmbiguousIDs()
-        success |= formatChecker.checkForCompleteness()
+        success &= formatChecker.checkForAmbiguousIDs()
+        success &= formatChecker.checkForCompleteness()
 
         if not success:
             write_stderr_red("Error:", "Stopping. Fix ids first. Evaluating with broken data does not make sense!\n    File: %s" % args.groundtruth)
             sys.exit()
+
+    # why would the evaluation start before checking format??
+    evaluator = MOTEvaluation(groundtruth, hypotheses)
 
     evaluator.evaluate()
     print "Track statistics"

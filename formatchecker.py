@@ -7,6 +7,7 @@ class FormatChecker:
 
         self.groundtruth_ = groundtruth
         self.hypotheses_ = hypotheses
+        self.is3D = True
 
 
     def checkForAmbiguousIDs(self):
@@ -78,7 +79,14 @@ class FormatChecker:
         """Check ground truth and hypotheses for containing width, height, x and y"""
 
         result = True
-        expectedKeys = ("x", "y", "width", "height")
+
+
+        if self.is3D :
+            expectedKeys = ("x", "y", "z")
+        else :
+            expectedKeys = ("x", "y", "width", "height")
+
+
 
         for f in self.groundtruth_["frames"]:
             for g in f["annotations"]:
@@ -96,3 +104,4 @@ class FormatChecker:
                         result &= False
 
         return result # true: OK, false: missing id found
+
