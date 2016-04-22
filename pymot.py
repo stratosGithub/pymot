@@ -232,7 +232,7 @@ class MOTEvaluation:
                     if distance <= self.distance_threshold:
                         #                        print "Fill Hungarian", rect_groundtruth, rect_hypothesis, overlap
                         munkres_matrix[i][j] = distance
-                        LOG.info("DIFF candidate %s %s %.2f" % (groundtruth["id"], hypothesis["id"], overlap))
+                        LOG.info("DIFF candidate %s %s %.2f" % (groundtruth["id"], hypothesis["id"], distance))
                 else:
                     rect_groundtruth = Rect(groundtruth)
                     rect_hypothesis = Rect(hypothesis)
@@ -281,7 +281,11 @@ class MOTEvaluation:
 #                correspondencelist.append("DIFF correspondence %s %s %.2f" % (gt_id, hypo_id, 1.0 / munkres_matrix[gt_index][hypo_index]))
             correspondencelist.append("DIFF correspondence %s %s" % (gt_id, hypo_id))
             correspondences[gt_id] = hypo_id
-            self.total_overlap_ += overlap
+
+            if self.use3D:
+                self.total_euclidian_distance_error += distance
+            else:
+                self.total_overlap_ += overlap
 
             # The dco flag stands for do not care and can be used to mark hard to track targets, e.g. because of occlusion.
             # Thus, a tracker which does not find the target will not be penalized, whereas a tracker which finds the
@@ -472,7 +476,10 @@ class MOTEvaluation:
             write_stderr_red("Warning", "No correspondences found. MOTP calculation not possible")
 #            raise("No correspondence found. MOTP calculation not possible")
         else:
-            motp = self.total_overlap_ / self.total_correspondences_
+            if self.use3D:
+                motp = self.total_euclidian_distance_error / self.total_correspondences_
+            else:
+                motp = self.total_overlap_ / self.total_correspondences_
         return motp
 
 
@@ -480,6 +487,16 @@ class MOTEvaluation:
         lonely_ground_truths = self.groundtruth_ids_ - set(self.gt_map_.keys())
         covered_ground_truths = self.groundtruth_ids_ & set(self.gt_map_.keys())
         lonely_hypotheses = self.hypothesis_ids_ - set(self.hypo_map_.keys())
+
+        distanceOrOverlapString = ""
+        distanceValue = 0.0
+        if self.use3D:
+            distanceOrOverlapString= "total distance error"
+            distanceValue = self.total_euclidian_distance_error
+        else:
+            distanceOrOverlapString = "total overlap"
+            distanceValue = self.total_overlap_
+
 
         return {
             "ground truths":   self.total_groundtruths_,
@@ -489,7 +506,7 @@ class MOTEvaluation:
             "recoverable mismatches": self.recoverable_mismatches_,
             "non-recoverable mismatches":  self.non_recoverable_mismatches_,
             "correspondences": self.total_correspondences_,
-            "total overlap":   self.total_overlap_,
+            distanceOrOverlapString:   distanceValue,
             "lonely ground truth tracks": len(lonely_ground_truths),
             "covered ground truth tracks": len(covered_ground_truths),
             "lonely hypothesis tracks":   len(lonely_hypotheses),
@@ -646,7 +663,7 @@ if __name__ == "__main__":
             sys.exit()
 
     # why would the evaluation start before checking format??
-    evaluator = MOTEvaluation(groundtruth, hypotheses)
+    evaluator = MOTEvaluation(groundtruth, hypotheses, True)
 
     evaluator.evaluate()
     print "Track statistics"
