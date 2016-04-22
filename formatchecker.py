@@ -2,12 +2,12 @@ from utilities import write_stderr_red
 
 class FormatChecker:
 
-    def __init__(self, groundtruth, hypotheses):
+    def __init__(self, groundtruth, hypotheses, check3D = True):
         """Constructor """
 
         self.groundtruth_ = groundtruth
         self.hypotheses_ = hypotheses
-        self.is3D = True
+        self.is3D = check3D
 
 
     def checkForAmbiguousIDs(self):

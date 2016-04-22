@@ -3,6 +3,8 @@
 import sys
 import json
 import argparse
+import math
+
 from munkres import Munkres
 from rect import Rect
 from importers import MOT_hypo_import
@@ -15,16 +17,21 @@ LOG = logging.getLogger(__name__)
 
 class MOTEvaluation:
 
-    def __init__(self, groundtruth, hypotheses):
+    def __init__(self, groundtruth, hypotheses, use3Dinput=True):
         """Constructor """
-        
+
+        # is the input we use is 3D
+        self.use3D = use3Dinput
+
+        self.distance_threshold = 50 # when using 3D input, the minimum distance between players should be 50 cm
+
         self.overlap_threshold_ = 0.2
         """Bounding box overlap threshold"""
     
         self.munkres_inf_ = sys.maxsize
         """Not quite infinite number for Munkres algorithm"""
 
-        # time measure in days, not milliseconds
+        # time is measure in days in the APIDIS dataset, not milliseconds
         self.sync_delta_ = 1.0/24/60.0/60.0/100.0  # 2/100th of a second time difference from groundtruth   #0.001 #measured in days,
         """Maximum offset considered for a match of hypothesis and ground truth"""
 
@@ -136,6 +143,7 @@ class MOTEvaluation:
         # PAPER STEP 1
         # Valid mappings skip Munkres algorithm, if both ground truth and hypo are found in this frame
         # We call these pairs correspondences and fill the list each frame.
+        # (python dictionary object)
         correspondences = {} # truth id -> hypothesis id
         
         listofprints = []
@@ -144,7 +152,7 @@ class MOTEvaluation:
 #            print "DIFF Keep correspondence"
             
         for gt_id in self.mappings_.keys():
-            groundtruth = filter(lambda g: g["id"] == gt_id, groundtruths) # Get ground truths with given ground truth id in current frame
+            groundtruth = filter(lambda g: g["id"] == gt_id, groundtruths) # Get ground truths with given ground truth id in current frame (is this necessary, if the formatcheck is done in advance?)
             if len(groundtruth) > 1:
                 LOG.warning("found %d > 1 ground truth tracks for id %s", len(groundtruth), gt_id)
             elif len(groundtruth) < 1:
@@ -156,14 +164,33 @@ class MOTEvaluation:
                 continue
             
             # Hypothesis found for known mapping
-            # Check hypothesis for overlap
-            overlap = Rect(groundtruth[0]).overlap(Rect(hypothesis[0]))
-            if overlap >= self.overlap_threshold_:
-                LOG.info("Keeping correspondence between %s and %s" % (groundtruth[0]["id"], hypothesis[0]["id"]))
-#                    print "DIFF Keep corr %s %s %.2f" % (groundtruth[0]["id"], hypothesis[0]["id"], Rect(groundtruth[0]).overlap(Rect(hypothesis[0])))
-                listofprints.append("DIFF Keep corr %s %s %.2f" % (groundtruth[0]["id"], hypothesis[0]["id"], Rect(groundtruth[0]).overlap(Rect(hypothesis[0]))))
-                correspondences[gt_id] = hypothesis[0]["id"]
-                self.total_overlap_ += overlap
+
+            if self.use3D :
+                # Check hypothesis for overlap, for 3D data
+                x_gt = groundtruth[0]["x"]
+                y_gt = groundtruth[0]["y"]
+                x_hyp = hypothesis[0]["x"]
+                y_hyp = hypothesis[0]["y"]
+
+                distance = math.sqrt((x_gt-x_hyp)**2 + (y_gt-y_hyp)**2)
+
+                if distance <= self.distance_threshold:
+                    LOG.info("Keeping correspondence between %s and %s" % (groundtruth[0]["id"], hypothesis[0]["id"]))
+                    #                    print "DIFF Keep corr %s %s %.2f" % (groundtruth[0]["id"], hypothesis[0]["id"], Rect(groundtruth[0]).overlap(Rect(hypothesis[0])))
+                    listofprints.append("DIFF Keep corr %s %s %.2f" % (
+                    groundtruth[0]["id"], hypothesis[0]["id"], distance))
+                    correspondences[gt_id] = hypothesis[0]["id"]
+                    self.total_euclidian_distance_error += distance
+
+            else:
+                # Check hypothesis for overlap, for 2D data
+                overlap = Rect(groundtruth[0]).overlap(Rect(hypothesis[0]))
+                if overlap >= self.overlap_threshold_:
+                    LOG.info("Keeping correspondence between %s and %s" % (groundtruth[0]["id"], hypothesis[0]["id"]))
+    #                    print "DIFF Keep corr %s %s %.2f" % (groundtruth[0]["id"], hypothesis[0]["id"], Rect(groundtruth[0]).overlap(Rect(hypothesis[0])))
+                    listofprints.append("DIFF Keep corr %s %s %.2f" % (groundtruth[0]["id"], hypothesis[0]["id"], Rect(groundtruth[0]).overlap(Rect(hypothesis[0]))))
+                    correspondences[gt_id] = hypothesis[0]["id"]
+                    self.total_overlap_ += overlap
 
         
         for p in sorted(listofprints):
@@ -193,16 +220,29 @@ class MOTEvaluation:
                 if hypothesis["id"] in correspondences.values():
                     LOG.info("Hypothesis %s already in correspondence" % hypothesis["id"])
                     continue
-                
-                rect_groundtruth = Rect(groundtruth)
-                rect_hypothesis = Rect(hypothesis)
-                overlap = rect_groundtruth.overlap(rect_hypothesis)
-                
-                if overlap >= self.overlap_threshold_:
-#                        print "Fill Hungarian", rect_groundtruth, rect_hypothesis, overlap
-                    munkres_matrix[i][j] = 1 / overlap
-                    LOG.info("DIFF candidate %s %s %.2f" % (groundtruth["id"], hypothesis["id"], overlap))
-        
+
+                if self.use3D:
+                    x_gt = groundtruth["x"]
+                    y_gt = groundtruth["y"]
+                    x_hyp = hypothesis["x"]
+                    y_hyp = hypothesis["y"]
+
+                    distance = math.sqrt((x_gt - x_hyp) ** 2 + (y_gt - y_hyp) ** 2)
+
+                    if distance <= self.distance_threshold:
+                        #                        print "Fill Hungarian", rect_groundtruth, rect_hypothesis, overlap
+                        munkres_matrix[i][j] = distance
+                        LOG.info("DIFF candidate %s %s %.2f" % (groundtruth["id"], hypothesis["id"], overlap))
+                else:
+                    rect_groundtruth = Rect(groundtruth)
+                    rect_hypothesis = Rect(hypothesis)
+                    overlap = rect_groundtruth.overlap(rect_hypothesis)
+
+                    if overlap >= self.overlap_threshold_:
+    #                        print "Fill Hungarian", rect_groundtruth, rect_hypothesis, overlap
+                        munkres_matrix[i][j] = 1 / overlap
+                        LOG.info("DIFF candidate %s %s %.2f" % (groundtruth["id"], hypothesis["id"], overlap))
+
         # Do the Munkres
         LOG.debug(munkres_matrix)
         
@@ -230,20 +270,26 @@ class MOTEvaluation:
             
             # Assert no known mappings have been added to hungarian, since keep correspondence should have considered this case.
             if gt_id in self.mappings_:
-                assert self.mappings_[gt_id] != hypo_id 
-            
-            
+                assert self.mappings_[gt_id] != hypo_id
+
+
             # Add to correspondences
-            LOG.info("Correspondence found: %s and %s (overlap: %f)" % (gt_id, hypo_id, 1.0 / munkres_matrix[gt_index][hypo_index]))
+            if self.use3D:
+                LOG.info("Correspondence found: %s and %s (distance: %f)" % (gt_id, hypo_id, munkres_matrix[gt_index][hypo_index]))
+            else:
+                LOG.info("Correspondence found: %s and %s (overlap: %f)" % (gt_id, hypo_id, 1.0 / munkres_matrix[gt_index][hypo_index]))
 #                correspondencelist.append("DIFF correspondence %s %s %.2f" % (gt_id, hypo_id, 1.0 / munkres_matrix[gt_index][hypo_index]))
             correspondencelist.append("DIFF correspondence %s %s" % (gt_id, hypo_id))
             correspondences[gt_id] = hypo_id
             self.total_overlap_ += overlap
-            
+
+            # The dco flag stands for do not care and can be used to mark hard to track targets, e.g. because of occlusion.
+            # Thus, a tracker which does not find the target will not be penalized, whereas a tracker which finds the
+            # target won't be punished (with a false positive) either.
 
             # Count "recoverable" and "non-recoverable" mismatches
             # "recoverable" mismatches
-            if gt_id in self.gt_map_ and self.gt_map_[gt_id] != hypo_id and not groundtruths[gt_index].get("dco",False):
+            if gt_id in self.gt_map_ and self.gt_map_[gt_id] != hypo_id and not groundtruths[gt_index].get("dco",False): #get will return False by default if the key "dco" does not exist and its true value otherwise
                 LOG.info("Look ma! We got a recoverable mismatch over here! (%s-%s) -> (%s-%s)" % (gt_id, self.gt_map_[gt_id], gt_id, hypo_id))
                 self.recoverable_mismatches_ += 1
 
@@ -548,9 +594,16 @@ class MOTEvaluation:
         self.misses_ = 0
         self.false_positives_ = 0
         self.total_groundtruths_ = 0
-        self.total_overlap_ = 0.0
+
+        if self.use3D:
+            self.total_euclidian_distance_error = 0.0
+        else:
+            self.total_overlap_ = 0.0
+
         self.total_correspondences_ = 0       
 
+        # create two sets containing a unique collection of all the id that
+        # occur for every frame
         self.groundtruth_ids_ = set()
         self.hypothesis_ids_ = set()
 
@@ -598,6 +651,8 @@ if __name__ == "__main__":
     evaluator.evaluate()
     print "Track statistics"
     evaluator.printTrackStatistics()
+
+    evaluator.getAbsoluteStatistics()
     print 
     print "Results"
     evaluator.printResults()
